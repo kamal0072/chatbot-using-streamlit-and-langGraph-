@@ -1,113 +1,97 @@
 import streamlit as st
 from messages import chatbot
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+import uuid
+
+# **************************************** utility functions *************************
+
+def generate_thread_id():
+    thread_id = uuid.uuid4()
+    return thread_id
+
+def reset_chat():
+    thread_id = generate_thread_id()
+    st.session_state['thread_id'] = thread_id
+    add_thread(st.session_state['thread_id'])
+    st.session_state['message_history'] = []
+
+def add_thread(thread_id):
+    if thread_id not in st.session_state['chat_threads']:
+        st.session_state['chat_threads'].append(thread_id)
+
+def load_conversation(thread_id):
+    state = chatbot.get_state(config={'configurable': {'thread_id': thread_id}})
+    # Check if messages key exists in state values, return empty list if not
+    return state.values.get('messages', [])
 
 st.set_page_config(
     page_title="Chatbot for a change",
     page_icon="🤖",
     layout="wide",
 )
+st.title("Chatbot like chatGpt")
 
-# navibation bar
-st.markdown("""
-        <style>
-        .navbar {
-            overflow: hidden;
-            background-color: #333a00;
-        }
-
-        .navbar a {
-            float: left;
-            font-size: 16px;
-            color: white;
-            text-align: center;
-            padding: 14px 16px;
-            text-decoration: none;
-        }
-        .navbar a:hover {
-            background-color: #ddd;
-            color: black;
-        }    
-        </style>            
-        <div class="navbar">
-            <a href="#">Home</a>
-            <a href="#">Analytics</a>
-            <a href="#">Settings</a>
-            <a href="#">Help</a>
-            <a href="#">Find on Github</a>
-            <a href="#">Contact</a>
-        </div>
-
-        <div class="spacer"></div>
-""", unsafe_allow_html=True)
-
-# ---------------------------------
-# Sidebar
-# ---------------------------------
-with st.sidebar:
-    st.title("⚙️ Chatbot Settings")
-    st.markdown("---")
-    st.info(
-        "Choose your options for the conversation."
-    )
-# sidebar options with dropdown menu bar
-enable_menu = st.sidebar.toggle("Show Menu", value=True)
-if enable_menu:
-    with st.sidebar.expander("🏠 Home"):
-        st.button("Dashboard")
-        st.button("Overview")
-
-    with st.sidebar.expander(" 🎓 Education"):
-        st.button("Technical")
-        st.button("Non-Technical")
-        st.button("General")
-        st.button("Other")
-        st.button("Resume")
-        st.button("Cover Letter")
-
-    with st.sidebar.expander(" 🚨 Health & Safety"):
-        st.button("Fever")
-        st.button("Cough")
-        st.button("Tiredness")
-        st.button("Fatigue")
-        st.button("Sore Throat")
-        st.button("Headache")
-        st.button("Nausea")
-    with st.sidebar.expander("🌾 Agriculture"):
-        st.button("Cultivation")
-        st.button("Soil")
-        st.button("Fertilizer")
-        st.button("Pesticides")
-        st.button("Irrigation")
-    with st.sidebar.expander(" 🌍 Social awareness"):
-        st.button("Social Media")
-        st.button("Cyberbullying")
-        st.button("Harassment")
-        st.button("Rape and Abuse")
-else:
-    st.sidebar.warning("Menu is hidden")
-st.title("Chatbot for a change")
-
-CONFIG1 = {"configurable" : {'thread_id' : "thread-1"}}
-# creating a chat history
+# **************************************** Session Setup ******************************
 if 'message_history' not in st.session_state:
-    st.session_state.message_history = []
+    st.session_state['message_history'] = []
 
+if 'thread_id' not in st.session_state:
+    st.session_state['thread_id'] = generate_thread_id()    
+
+if 'chat_threads' not in st.session_state:
+    st.session_state['chat_threads'] = []
+add_thread(st.session_state['thread_id'])
+
+
+# **************************************** Sidebar UI *********************************
+st.sidebar.title("Chatbot for a change")
+if st.sidebar.button("New Chat Session"):
+    reset_chat()
+st.sidebar.header("My chat history")
+    
+for thread_id in st.session_state['chat_threads'][::-1]:
+    if st.sidebar.button(str(thread_id)):
+        print("The thread id is + ", thread_id)
+        st.session_state['thread_id'] = thread_id
+        messages = load_conversation(thread_id)
+
+        temp_messages = []
+
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                role='user'
+            else:
+                role='assistant'
+            temp_messages.append({'role': role, 'content': msg.content})
+
+        st.session_state['message_history'] = temp_messages
+
+
+# # **************************************** Main UI ************************************
 # loading the conversation history
-for msg in st.session_state.message_history:
-    with st.chat_message(msg['role']):
-        st.text(msg['content'])
+for message in st.session_state['message_history']:
+    with st.chat_message(message['role']):
+        st.text(message['content'])
 
 user_input = st.chat_input(placeholder="Type your message here...")
 if user_input:
     # first add the messags to messages history
-    st.session_state.message_history.append({'role': 'user', 'content': user_input})
+    st.session_state['message_history'].append({'role': 'user', 'content': user_input})
     with st.chat_message('user', avatar="https://i.pravatar.cc/150?u=a042581f4e28540bc8c1"):
-        st.write(user_input)
+        st.text(user_input)
 
-    response = chatbot.invoke({'messages': [HumanMessage(content=user_input)]}, config=CONFIG1)
-    ai_message = response['messages'][-1].content
-    # first add the messags to messages history
-    st.session_state.message_history.append({'role': 'assistant', 'content': ai_message}, )
+    CONFIG = {"configurable" : {'thread_id' : st.session_state['thread_id']}}
+
+    # first add the message to message_history
     with st.chat_message('assistant', avatar="https://i.pravatar.cc/150?u=a042581f4e28540bc8c2"):
-        st.text(ai_message)
+        def ai_only_stream():
+            for message_chunk, metadata in chatbot.stream(
+                {"messages": [HumanMessage(content=user_input)]},
+                config=CONFIG,
+                stream_mode="messages"
+            ):
+                if isinstance(message_chunk, AIMessage):
+                    # yield only assistant tokens
+                    yield message_chunk.content
+        ai_message = st.write_stream(ai_only_stream)
+    st.session_state['message_history'].append({'role': 'assistant', 'content': ai_message}, )
